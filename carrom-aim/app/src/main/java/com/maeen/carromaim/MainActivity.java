@@ -2,7 +2,6 @@ package com.maeen.carromaim;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -11,7 +10,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -41,13 +39,13 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         scroll.addView(root);
 
-        TextView title = text("Carrom Auto Aim v2", 28, Color.rgb(11, 52, 91));
+        TextView title = text("Carrom Aim Vision v2.1", 28, Color.rgb(11, 52, 91));
         title.setGravity(Gravity.CENTER);
         root.addView(title, matchWrap());
 
         TextView subtitle = text(
-                "Automatic board/coin/striker detection + multi-line shot heat guide\n" +
-                "Only displays while Carrom Pool is foreground", 15, Color.DKGRAY);
+                "Visual-only board/coin/striker detection + trajectory heat guide\n" +
+                "No Accessibility service and no automatic input control", 15, Color.DKGRAY);
         subtitle.setGravity(Gravity.CENTER);
         subtitle.setPadding(0, dp(8), 0, dp(18));
         root.addView(subtitle, matchWrap());
@@ -60,29 +58,26 @@ public class MainActivity extends Activity {
         overlay.setOnClickListener(v -> requestOverlayPermission());
         root.addView(overlay, top(12));
 
-        Button access = button("2. Enable Carrom game detector");
-        access.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        root.addView(access, top(8));
-
-        Button start = button("3. Start automatic aim + open Carrom Pool");
+        Button start = button("2. Start visual aim + open Carrom Pool");
         start.setOnClickListener(v -> beginCapture());
         root.addView(start, top(8));
 
-        Button stop = button("Stop automatic aim");
+        Button stop = button("Stop visual aim");
         stop.setOnClickListener(v -> {
             stopService(new Intent(this, AutoAimService.class));
-            Toast.makeText(this, "Auto aim stopped", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Visual aim stopped", Toast.LENGTH_SHORT).show();
         });
         root.addView(stop, top(8));
 
         TextView info = text(
-                "How v2 works\n\n" +
-                "• The accessibility service reads only the foreground app package name. It does not inspect or click game UI.\n" +
-                "• Android screen-capture permission supplies frames locally to the detector. No screenshot is uploaded or saved.\n" +
-                "• The detector estimates the board from corner pockets, detects black/white discs, infers your colour from the local-player HUD, and tracks the striker near the lower baseline.\n" +
-                "• Up to six feasible direct-pot trajectories are ranked. Green is the best geometric option, then yellow/orange/red.\n" +
-                "• Each candidate shows striker → ghost-contact and coin → pocket. The lines update as the striker moves.\n\n" +
-                "If AUTO cannot infer your disc colour in a particular arena/theme, it still highlights detected discs and continues to search on later frames.",
+                "How v2.1 works\n\n" +
+                "• You explicitly approve Android screen capture each time you start the detector.\n" +
+                "• Frames are processed locally in memory and are not uploaded or saved.\n" +
+                "• The app looks for a strong carrom-board visual signature before showing the overlay.\n" +
+                "• It estimates pockets, black/white discs and the lower-baseline striker, then ranks direct-pot trajectories.\n" +
+                "• Multiple translucent green/yellow/orange/red lines form the heat-style guide.\n" +
+                "• The overlay is hidden when the captured frame does not look like an active carrom board.\n\n" +
+                "This build intentionally removes the Accessibility service that caused Android to classify the earlier build as requesting sensitive access.",
                 15, Color.rgb(45,45,45));
         info.setPadding(0, dp(22), 0, 0);
         info.setLineSpacing(0, 1.12f);
@@ -92,11 +87,7 @@ public class MainActivity extends Activity {
         refreshStatus();
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        refreshStatus();
-    }
+    @Override protected void onResume() { super.onResume(); refreshStatus(); }
 
     private void requestOverlayPermission() {
         if (Settings.canDrawOverlays(this)) return;
@@ -104,30 +95,10 @@ public class MainActivity extends Activity {
                 Uri.parse("package:" + getPackageName())));
     }
 
-    private boolean accessibilityEnabled() {
-        String enabled = Settings.Secure.getString(getContentResolver(),
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        if (TextUtils.isEmpty(enabled)) return false;
-        ComponentName mine = new ComponentName(this, GameWatchService.class);
-        String flat = mine.flattenToString();
-        String shortFlat = mine.flattenToShortString();
-        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
-        splitter.setString(enabled);
-        for (String s : splitter) {
-            if (flat.equalsIgnoreCase(s) || shortFlat.equalsIgnoreCase(s)) return true;
-        }
-        return false;
-    }
-
     private void beginCapture() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Grant display-over-apps permission first", Toast.LENGTH_LONG).show();
             requestOverlayPermission();
-            return;
-        }
-        if (!accessibilityEnabled()) {
-            Toast.makeText(this, "Enable Carrom game detector first", Toast.LENGTH_LONG).show();
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
             return;
         }
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE);
@@ -147,7 +118,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc); else startService(svc);
 
         getWindow().getDecorView().postDelayed(() -> {
-            Intent launch = getPackageManager().getLaunchIntentForPackage(GameWatchService.TARGET_PACKAGE);
+            Intent launch = getPackageManager().getLaunchIntentForPackage("com.miniclip.carrom");
             if (launch != null) startActivity(launch);
             else Toast.makeText(this, "Carrom Pool package not found", Toast.LENGTH_LONG).show();
         }, 650);
@@ -155,10 +126,9 @@ public class MainActivity extends Activity {
 
     private void refreshStatus() {
         boolean o = Settings.canDrawOverlays(this);
-        boolean a = accessibilityEnabled();
-        status.setText("Overlay permission: " + (o ? "READY" : "NOT GRANTED") +
-                "\nGame detector: " + (a ? "READY" : "NOT ENABLED"));
-        status.setTextColor(o && a ? Color.rgb(0,125,70) : Color.rgb(180,60,30));
+        status.setText("Display-over-apps permission: " + (o ? "READY" : "NOT GRANTED") +
+                "\nSensitive Accessibility access: NOT USED");
+        status.setTextColor(o ? Color.rgb(0,125,70) : Color.rgb(180,60,30));
     }
 
     private TextView text(String s, float sp, int color) {
