@@ -2,13 +2,16 @@ package com.maeen.carromaim;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -17,11 +20,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private static final int REQ_CAPTURE = 2101;
     private TextView status;
+    private MediaProjectionManager projectionManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
 
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -35,57 +41,52 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         scroll.addView(root);
 
-        TextView title = new TextView(this);
-        title.setText("Carrom Aim Overlay");
-        title.setTextSize(28f);
-        title.setTextColor(Color.rgb(16, 52, 91));
+        TextView title = text("Carrom Auto Aim v2", 28, Color.rgb(11, 52, 91));
         title.setGravity(Gravity.CENTER);
-        title.setPadding(0, 0, 0, dp(8));
         root.addView(title, matchWrap());
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("Pocket geometry guide for private/offline practice\nStandalone companion — does not modify the game APK");
-        subtitle.setTextSize(15f);
-        subtitle.setTextColor(Color.DKGRAY);
+        TextView subtitle = text(
+                "Automatic board/coin/striker detection + multi-line shot heat guide\n" +
+                "Only displays while Carrom Pool is foreground", 15, Color.DKGRAY);
         subtitle.setGravity(Gravity.CENTER);
-        subtitle.setPadding(0, 0, 0, dp(20));
+        subtitle.setPadding(0, dp(8), 0, dp(18));
         root.addView(subtitle, matchWrap());
 
-        status = new TextView(this);
-        status.setTextSize(15f);
-        status.setPadding(dp(14), dp(12), dp(14), dp(12));
+        status = text("", 15, Color.DKGRAY);
+        status.setPadding(dp(12), dp(10), dp(12), dp(10));
         root.addView(status, matchWrap());
 
-        Button permissionButton = makeButton("1. Grant overlay permission");
-        permissionButton.setOnClickListener(v -> requestOverlayPermission());
-        root.addView(permissionButton, matchWrapWithTop(12));
+        Button overlay = button("1. Grant display-over-apps permission");
+        overlay.setOnClickListener(v -> requestOverlayPermission());
+        root.addView(overlay, top(12));
 
-        Button startButton = makeButton("2. Start aim overlay");
-        startButton.setOnClickListener(v -> startOverlay());
-        root.addView(startButton, matchWrapWithTop(10));
+        Button access = button("2. Enable Carrom game detector");
+        access.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        root.addView(access, top(8));
 
-        Button stopButton = makeButton("Stop overlay");
-        stopButton.setOnClickListener(v -> stopService(new Intent(this, OverlayService.class)));
-        root.addView(stopButton, matchWrapWithTop(10));
+        Button start = button("3. Start automatic aim + open Carrom Pool");
+        start.setOnClickListener(v -> beginCapture());
+        root.addView(start, top(8));
 
-        TextView guide = new TextView(this);
-        guide.setText(
-                "How to use\n\n" +
-                "1) Start the overlay, then open Carrom Disc Pool.\n" +
-                "2) In EDIT mode, drag P1–P4 to the four pocket centers. You only need to calibrate once.\n" +
-                "3) Drag S onto your striker and T onto the disc you want to pocket.\n" +
-                "4) Tap the pocket button to cycle P1 → P2 → P3 → P4.\n" +
-                "5) The GREEN line is the target-disc path to the pocket.\n" +
-                "6) The YELLOW line is the striker aim line toward the ghost-contact point.\n" +
-                "7) Tap PLAY. The drawing stays visible, but touches pass through to the game.\n" +
-                "8) Tap EDIT on the floating control bar whenever you need to move the markers.\n\n" +
-                "This version is a manual geometric practice overlay. It does not automatically detect coins, read game memory, inject input, or alter the game."
-        );
-        guide.setTextSize(15f);
-        guide.setTextColor(Color.rgb(45,45,45));
-        guide.setLineSpacing(0f, 1.15f);
-        guide.setPadding(0, dp(24), 0, 0);
-        root.addView(guide, matchWrap());
+        Button stop = button("Stop automatic aim");
+        stop.setOnClickListener(v -> {
+            stopService(new Intent(this, AutoAimService.class));
+            Toast.makeText(this, "Auto aim stopped", Toast.LENGTH_SHORT).show();
+        });
+        root.addView(stop, top(8));
+
+        TextView info = text(
+                "How v2 works\n\n" +
+                "• The accessibility service reads only the foreground app package name. It does not inspect or click game UI.\n" +
+                "• Android screen-capture permission supplies frames locally to the detector. No screenshot is uploaded or saved.\n" +
+                "• The detector estimates the board from corner pockets, detects black/white discs, infers your colour from the local-player HUD, and tracks the striker near the lower baseline.\n" +
+                "• Up to six feasible direct-pot trajectories are ranked. Green is the best geometric option, then yellow/orange/red.\n" +
+                "• Each candidate shows striker → ghost-contact and coin → pocket. The lines update as the striker moves.\n\n" +
+                "If AUTO cannot infer your disc colour in a particular arena/theme, it still highlights detected discs and continues to search on later frames.",
+                15, Color.rgb(45,45,45));
+        info.setPadding(0, dp(22), 0, 0);
+        info.setLineSpacing(0, 1.12f);
+        root.addView(info, matchWrap());
 
         setContentView(scroll);
         refreshStatus();
@@ -98,53 +99,88 @@ public class MainActivity extends Activity {
     }
 
     private void requestOverlayPermission() {
-        if (Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Overlay permission already granted", Toast.LENGTH_SHORT).show();
-            refreshStatus();
-            return;
-        }
-        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName()));
-        startActivity(intent);
+        if (Settings.canDrawOverlays(this)) return;
+        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())));
     }
 
-    private void startOverlay() {
+    private boolean accessibilityEnabled() {
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (TextUtils.isEmpty(enabled)) return false;
+        ComponentName mine = new ComponentName(this, GameWatchService.class);
+        String flat = mine.flattenToString();
+        String shortFlat = mine.flattenToShortString();
+        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
+        splitter.setString(enabled);
+        for (String s : splitter) {
+            if (flat.equalsIgnoreCase(s) || shortFlat.equalsIgnoreCase(s)) return true;
+        }
+        return false;
+    }
+
+    private void beginCapture() {
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Grant overlay permission first", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Grant display-over-apps permission first", Toast.LENGTH_LONG).show();
             requestOverlayPermission();
             return;
         }
-        Intent intent = new Intent(this, OverlayService.class);
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
-        Toast.makeText(this, "Overlay started. Open the game now.", Toast.LENGTH_LONG).show();
+        if (!accessibilityEnabled()) {
+            Toast.makeText(this, "Enable Carrom game detector first", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            return;
+        }
+        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_CAPTURE) return;
+        if (resultCode != RESULT_OK || data == null) {
+            Toast.makeText(this, "Screen capture permission is required", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent svc = new Intent(this, AutoAimService.class);
+        svc.putExtra(AutoAimService.EXTRA_RESULT_CODE, resultCode);
+        svc.putExtra(AutoAimService.EXTRA_RESULT_DATA, data);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc); else startService(svc);
+
+        getWindow().getDecorView().postDelayed(() -> {
+            Intent launch = getPackageManager().getLaunchIntentForPackage(GameWatchService.TARGET_PACKAGE);
+            if (launch != null) startActivity(launch);
+            else Toast.makeText(this, "Carrom Pool package not found", Toast.LENGTH_LONG).show();
+        }, 650);
     }
 
     private void refreshStatus() {
-        boolean granted = Settings.canDrawOverlays(this);
-        status.setText(granted ? "Overlay permission: GRANTED" : "Overlay permission: NOT GRANTED");
-        status.setTextColor(granted ? Color.rgb(0, 120, 70) : Color.rgb(190, 55, 30));
+        boolean o = Settings.canDrawOverlays(this);
+        boolean a = accessibilityEnabled();
+        status.setText("Overlay permission: " + (o ? "READY" : "NOT GRANTED") +
+                "\nGame detector: " + (a ? "READY" : "NOT ENABLED"));
+        status.setTextColor(o && a ? Color.rgb(0,125,70) : Color.rgb(180,60,30));
     }
 
-    private Button makeButton(String text) {
+    private TextView text(String s, float sp, int color) {
+        TextView t = new TextView(this);
+        t.setText(s); t.setTextSize(sp); t.setTextColor(color);
+        return t;
+    }
+
+    private Button button(String s) {
         Button b = new Button(this);
-        b.setText(text);
-        b.setTextSize(16f);
-        b.setAllCaps(false);
-        b.setMinHeight(dp(52));
+        b.setText(s); b.setTextSize(16); b.setAllCaps(false); b.setMinHeight(dp(52));
         return b;
     }
 
     private LinearLayout.LayoutParams matchWrap() {
-        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
     }
 
-    private LinearLayout.LayoutParams matchWrapWithTop(int topDp) {
-        LinearLayout.LayoutParams lp = matchWrap();
-        lp.topMargin = dp(topDp);
-        return lp;
+    private LinearLayout.LayoutParams top(int dpTop) {
+        LinearLayout.LayoutParams lp = matchWrap(); lp.topMargin = dp(dpTop); return lp;
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
+    private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
 }
