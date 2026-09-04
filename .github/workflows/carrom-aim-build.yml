@@ -1,8 +1,8 @@
-name: Build Carrom Auto Aim v2 APK
+name: Build Carrom Aim Vision v2.1 APK
 
 on:
   push:
-    branches: [carrom-aim-v2-auto-20260904]
+    branches: [carrom-aim-v2.1-playprotect-20260904]
     paths:
       - 'carrom-aim/**'
       - '.github/workflows/carrom-aim-build.yml'
@@ -36,11 +36,11 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Copy final APK
-        run: cp carrom-aim/app/build/outputs/apk/debug/app-debug.apk CarromAutoAim-v2.0.0.apk
+        run: cp carrom-aim/app/build/outputs/apk/debug/app-debug.apk CarromAimVision-v2.1.0.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CarromAutoAim-v2.0.0
-          path: CarromAutoAim-v2.0.0.apk
+          name: CarromAimVision-v2.1.0
+          path: CarromAimVision-v2.1.0.apk
           if-no-files-found: error
