@@ -11,14 +11,16 @@ public final class ProfileStore {
         public String playerId = "";
         public String side = "AUTO";
         public boolean calibrated = false;
-        public float boardLeft = 0.03f;
-        public float boardTop = 0.25f;
-        public float boardRight = 0.97f;
-        public float boardBottom = 0.92f;
-        public float pocketInset = 0.048f;
-        public float coinRadius = 0.0235f;
-        public float strikerRadius = 0.029f;
-        public float baselineY = 0.885f;
+        // Defaults tuned to the user's 921x2048 Carrom screenshots. Board is
+        // subsequently forced square in pixel coordinates by ProfileGuidedAnalyzer.
+        public float boardLeft = 0.015f;
+        public float boardTop = 0.265f;
+        public float boardRight = 0.985f;
+        public float boardBottom = 0.705f;
+        public float pocketInset = 0.065f;
+        public float coinRadius = 0.026f;
+        public float strikerRadius = 0.034f;
+        public float baselineY = 0.870f;
         public int coinColor = 0;
         public int strikerColor = 0;
     }
@@ -31,6 +33,18 @@ public final class ProfileStore {
 
     private static String k(String id, String field) {
         return "p_" + safe(id) + "_" + field;
+    }
+
+    public static void applyScreenshotPreset(Profile p) {
+        p.boardLeft = 0.015f;
+        p.boardTop = 0.265f;
+        p.boardRight = 0.985f;
+        p.boardBottom = 0.705f;
+        p.pocketInset = 0.065f;
+        p.coinRadius = 0.026f;
+        p.strikerRadius = 0.034f;
+        p.baselineY = 0.870f;
+        p.calibrated = true;
     }
 
     public static void save(Context c, Profile p) {
