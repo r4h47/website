@@ -1,8 +1,8 @@
-name: Build Carrom Aim Vision v3.1 APK
+name: Build Carrom Data Logger APK
 
 on:
   push:
-    branches: [carrom-aim-v3.1-turn-dimension-20260904]
+    branches: [carrom-data-logger-v1-20260904]
     paths:
       - 'carrom-aim/**'
       - '.github/workflows/carrom-aim-build.yml'
@@ -36,11 +36,11 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Copy final APK
-        run: cp carrom-aim/app/build/outputs/apk/debug/app-debug.apk CarromAimVision-v3.1.0.apk
+        run: cp carrom-aim/app/build/outputs/apk/debug/app-debug.apk CarromDataLogger-v1.0.0.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CarromAimVision-v3.1.0
-          path: CarromAimVision-v3.1.0.apk
+          name: CarromDataLogger-v1.0.0
+          path: CarromDataLogger-v1.0.0.apk
           if-no-files-found: error
