@@ -6,10 +6,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.Settings;
+import android.os.Environment;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
@@ -18,67 +17,129 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+
 public class MainActivity extends Activity {
-    private static final int REQ_CAPTURE = 2101;
-    private TextView status, profileStatus;
-    private EditText playerId;
+    private static final int REQ_CAPTURE = 4101;
     private MediaProjectionManager projectionManager;
-    private String activeId = "";
+    private EditText playerId;
+    private EditText intervalMs;
+    private TextView status;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        projectionManager = (MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},1001);
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
 
-        ScrollView sc=new ScrollView(this); LinearLayout root=new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(20),dp(24),dp(20),dp(28)); root.setGravity(Gravity.CENTER_HORIZONTAL); sc.addView(root);
-        TextView title=text("Carrom Aim Vision v3.1",28,Color.rgb(10,48,88)); title.setGravity(Gravity.CENTER); root.addView(title,mw());
-        TextView sub=text("Player profile + screenshot-calibrated board geometry + local-turn-only trajectory",15,Color.DKGRAY); sub.setGravity(Gravity.CENTER); sub.setPadding(0,dp(6),0,dp(16)); root.addView(sub,mw());
+        ScrollView sc = new ScrollView(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(20), dp(24), dp(20), dp(28));
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        sc.addView(root);
 
-        playerId=new EditText(this); playerId.setHint("Enter your Carrom Player ID (local profile name)"); playerId.setText(ProfileStore.lastProfileId(this)); playerId.setSingleLine(true); root.addView(playerId,mw());
-        Button load=button("Load / create local profile"); load.setOnClickListener(v->loadProfile()); root.addView(load,top(8));
-        profileStatus=text("No profile loaded",15,Color.DKGRAY); profileStatus.setPadding(dp(10),dp(10),dp(10),dp(10)); root.addView(profileStatus,top(8));
+        TextView title = text("Carrom Data Logger", 28, Color.rgb(18, 58, 92));
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, mw());
 
-        Button preset=button("Apply geometry from my screenshots");
-        preset.setOnClickListener(v->{
-            if(!ensureProfile())return;
-            ProfileStore.Profile p=ProfileStore.load(this,activeId);
-            ProfileStore.applyScreenshotPreset(p);
-            ProfileStore.save(this,p);
-            showProfile();
-            Toast.makeText(this,"Screenshot-calibrated board geometry applied",Toast.LENGTH_LONG).show();
+        TextView sub = text("Collect gameplay frames locally for offline analysis and detector development", 15, Color.DKGRAY);
+        sub.setGravity(Gravity.CENTER);
+        sub.setPadding(0, dp(6), 0, dp(16));
+        root.addView(sub, mw());
+
+        playerId = new EditText(this);
+        playerId.setHint("Player ID / local session label");
+        playerId.setSingleLine(true);
+        root.addView(playerId, mw());
+
+        intervalMs = new EditText(this);
+        intervalMs.setHint("Frame interval in ms (default 700)");
+        intervalMs.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        intervalMs.setText("700");
+        root.addView(intervalMs, top(8));
+
+        Button start = button("Start data collection");
+        start.setOnClickListener(v -> beginCapture());
+        root.addView(start, top(12));
+
+        Button stop = button("Stop data collection");
+        stop.setOnClickListener(v -> {
+            Intent s = new Intent(this, DataLoggerService.class);
+            s.setAction(DataLoggerService.ACTION_STOP);
+            startService(s);
+            Toast.makeText(this, "Data collection stopped", Toast.LENGTH_SHORT).show();
+            refreshStatus();
         });
-        root.addView(preset,top(8));
+        root.addView(stop, top(8));
 
-        Button calibrate=button("Fine-tune calibration manually"); calibrate.setOnClickListener(v->{ if(!ensureProfile())return; Intent i=new Intent(this,CalibrationActivity.class); i.putExtra(CalibrationActivity.EXTRA_PLAYER_ID,activeId); startActivity(i); }); root.addView(calibrate,top(8));
-        status=text("",14,Color.DKGRAY); status.setPadding(dp(10),dp(10),dp(10),dp(10)); root.addView(status,top(10));
-        Button overlay=button("Grant display-over-apps permission"); overlay.setOnClickListener(v->requestOverlayPermission()); root.addView(overlay,top(8));
-        Button start=button("Start local-turn aim + open Carrom Pool"); start.setOnClickListener(v->beginCapture()); root.addView(start,top(8));
-        Button stop=button("Stop visual aim"); stop.setOnClickListener(v->stopService(new Intent(this,AutoAimService.class))); root.addView(stop,top(8));
+        status = text("", 14, Color.DKGRAY);
+        status.setPadding(dp(10), dp(12), dp(10), dp(12));
+        root.addView(status, top(12));
 
-        TextView info=text(
-                "What changed in v3.1\n\n"+
-                "• Your two screenshots were used to correct the default board proportions for a 921×2048 capture.\n"+
-                "• The board is forced to remain square in pixel coordinates, so it cannot extend into the chat/menu area below the board.\n"+
-                "• Pocket centers are refined locally from the dark corner pockets instead of using only fixed percentages.\n"+
-                "• The app now searches both striker baselines and shows trajectories only when the striker is detected on YOUR lower baseline.\n"+
-                "• When the opponent striker is at the top baseline, the overlay is hidden immediately.\n"+
-                "• Debug circles around unrelated UI elements were removed; only the strongest clear trajectories are rendered.\n\n"+
-                "Recommended: load your profile, tap 'Apply geometry from my screenshots', then start the aim. Use manual calibration only if the board is still a few pixels off.",
-                15,Color.rgb(45,45,45));
-        info.setPadding(0,dp(20),0,0); info.setLineSpacing(0,1.12f); root.addView(info,mw());
-        setContentView(sc); refresh(); if(!playerId.getText().toString().trim().isEmpty())loadProfile();
+        TextView info = text(
+                "What it stores\n\n" +
+                "• sampled full-screen JPEG frames\n" +
+                "• frame timestamps and elapsed time\n" +
+                "• display width/height\n" +
+                "• session start/end metadata\n\n" +
+                "The app does not draw aim lines, automate input, read game memory, or intercept network traffic. " +
+                "It only records frames after you approve Android screen capture.\n\n" +
+                "For best results, record 2–3 complete matches and include several of your turns where you move the striker, aim, and shoot. " +
+                "Then copy the generated session folder to a ZIP and upload it here.",
+                15, Color.rgb(45,45,45));
+        info.setPadding(0, dp(16), 0, 0);
+        info.setLineSpacing(0, 1.12f);
+        root.addView(info, mw());
+
+        setContentView(sc);
+        refreshStatus();
     }
 
-    @Override protected void onResume(){super.onResume();refresh(); if(!activeId.isEmpty())showProfile();}
-    private void loadProfile(){String id=playerId.getText().toString().trim(); if(id.isEmpty()){Toast.makeText(this,"Enter a Player ID first",Toast.LENGTH_LONG).show();return;} activeId=id; ProfileStore.Profile p=ProfileStore.load(this,id); ProfileStore.save(this,p); showProfile();}
-    private boolean ensureProfile(){if(activeId.isEmpty())loadProfile(); return !activeId.isEmpty();}
-    private void showProfile(){ProfileStore.Profile p=ProfileStore.load(this,activeId); profileStatus.setText("Active local profile: "+activeId+"\nCalibration: "+(p.calibrated?"SAVED":"NOT YET SAVED")+"   My side: "+p.side+"\nBoard: square-locked   Local-turn gate: ON"); profileStatus.setTextColor(p.calibrated?Color.rgb(0,120,70):Color.rgb(175,90,20));}
-    private void requestOverlayPermission(){if(Settings.canDrawOverlays(this))return; startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())));}
-    private void beginCapture(){if(!ensureProfile())return; ProfileStore.Profile p=ProfileStore.load(this,activeId); if(!p.calibrated){Toast.makeText(this,"Apply screenshot geometry or calibrate this profile first",Toast.LENGTH_LONG).show();return;} if(!Settings.canDrawOverlays(this)){requestOverlayPermission();return;} startActivityForResult(projectionManager.createScreenCaptureIntent(),REQ_CAPTURE);}
-    @Override protected void onActivityResult(int rc,int resultCode,Intent data){super.onActivityResult(rc,resultCode,data); if(rc!=REQ_CAPTURE)return; if(resultCode!=RESULT_OK||data==null){Toast.makeText(this,"Screen capture permission is required",Toast.LENGTH_LONG).show();return;} Intent svc=new Intent(this,AutoAimService.class); svc.putExtra(AutoAimService.EXTRA_RESULT_CODE,resultCode); svc.putExtra(AutoAimService.EXTRA_RESULT_DATA,data); svc.putExtra(AutoAimService.EXTRA_PROFILE_ID,activeId); if(Build.VERSION.SDK_INT>=26)startForegroundService(svc);else startService(svc); getWindow().getDecorView().postDelayed(()->{Intent launch=getPackageManager().getLaunchIntentForPackage("com.miniclip.carrom"); if(launch!=null)startActivity(launch); else Toast.makeText(this,"Carrom Pool package not found",Toast.LENGTH_LONG).show();},650);}
-    private void refresh(){boolean o=Settings.canDrawOverlays(this); status.setText("Display-over-apps: "+(o?"READY":"NOT GRANTED")+"\nScreen analysis: local only   Accessibility: not used"); status.setTextColor(o?Color.rgb(0,120,70):Color.rgb(180,60,30));}
-    private TextView text(String s,float sp,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(sp);t.setTextColor(color);return t;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setTextSize(16);b.setMinHeight(dp(50));return b;}
-    private LinearLayout.LayoutParams mw(){return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT);} private LinearLayout.LayoutParams top(int x){LinearLayout.LayoutParams lp=mw();lp.topMargin=dp(x);return lp;} private int dp(int x){return Math.round(x*getResources().getDisplayMetrics().density);}
+    @Override protected void onResume() { super.onResume(); refreshStatus(); }
+
+    private void beginCapture() {
+        String id = playerId.getText().toString().trim();
+        if (id.isEmpty()) {
+            Toast.makeText(this, "Enter a Player ID or session label", Toast.LENGTH_LONG).show();
+            return;
+        }
+        long interval = 700;
+        try { interval = Long.parseLong(intervalMs.getText().toString().trim()); } catch (Exception ignored) {}
+        interval = Math.max(250, Math.min(3000, interval));
+        intervalMs.setText(String.valueOf(interval));
+        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQ_CAPTURE);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_CAPTURE) return;
+        if (resultCode != RESULT_OK || data == null) {
+            Toast.makeText(this, "Screen capture permission is required", Toast.LENGTH_LONG).show();
+            return;
+        }
+        long interval = 700;
+        try { interval = Long.parseLong(intervalMs.getText().toString().trim()); } catch (Exception ignored) {}
+        Intent svc = new Intent(this, DataLoggerService.class);
+        svc.putExtra(DataLoggerService.EXTRA_RESULT_CODE, resultCode);
+        svc.putExtra(DataLoggerService.EXTRA_RESULT_DATA, data);
+        svc.putExtra(DataLoggerService.EXTRA_PLAYER_ID, playerId.getText().toString().trim());
+        svc.putExtra(DataLoggerService.EXTRA_INTERVAL_MS, interval);
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc); else startService(svc);
+        Toast.makeText(this, "Recording started. Open Carrom Pool and play normally.", Toast.LENGTH_LONG).show();
+        refreshStatus();
+    }
+
+    private void refreshStatus() {
+        File root = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File logger = new File(root, "CarromLogger");
+        status.setText("Saved locally under:\n" + logger.getAbsolutePath() +
+                "\n\nEach session contains frames/ + metadata.csv + README.txt");
+    }
+
+    private TextView text(String s, float sp, int color) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); return t; }
+    private Button button(String s) { Button b = new Button(this); b.setText(s); b.setAllCaps(false); b.setTextSize(16); b.setMinHeight(dp(50)); return b; }
+    private LinearLayout.LayoutParams mw() { return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT); }
+    private LinearLayout.LayoutParams top(int x) { LinearLayout.LayoutParams lp = mw(); lp.topMargin = dp(x); return lp; }
+    private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
 }
