@@ -1,25 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <queries>
-        <package android:name="com.miniclip.carrom" />
-    </queries>
-
     <application
         android:allowBackup="false"
-        android:label="Carrom Aim Vision"
+        android:label="Carrom Data Logger"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-
-        <activity
-            android:name=".CalibrationActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
 
         <activity
             android:name=".MainActivity"
@@ -32,7 +22,7 @@
         </activity>
 
         <service
-            android:name=".AutoAimService"
+            android:name=".DataLoggerService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
     </application>
