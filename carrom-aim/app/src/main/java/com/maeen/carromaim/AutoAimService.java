@@ -29,7 +29,7 @@ import java.nio.ByteBuffer;
 public class AutoAimService extends Service {
     public static final String EXTRA_RESULT_CODE = "resultCode";
     public static final String EXTRA_RESULT_DATA = "resultData";
-    private static final String CHANNEL = "carrom_auto_aim_v2";
+    private static final String CHANNEL = "carrom_aim_vision_v21";
     private static final int NOTIFY_ID = 52;
 
     private WindowManager wm;
@@ -45,6 +45,8 @@ public class AutoAimService extends Service {
     private Bitmap rowBitmap;
     private int rowBitmapW = 0, rowBitmapH = 0;
     private int[] framePixels;
+    private int positiveFrames = 0;
+    private int negativeFrames = 0;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -77,6 +79,7 @@ public class AutoAimService extends Service {
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         wm.addView(overlay, lp);
+        overlay.setGameVisible(false);
     }
 
     private void startProjection(int resultCode, Intent data) {
@@ -91,16 +94,16 @@ public class AutoAimService extends Service {
         wm.getDefaultDisplay().getRealMetrics(dm);
         int w = dm.widthPixels, h = dm.heightPixels, density = dm.densityDpi;
         reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2);
-        captureThread = new HandlerThread("carrom-capture");
+        captureThread = new HandlerThread("carrom-vision-capture");
         captureThread.start();
         captureHandler = new Handler(captureThread.getLooper());
         reader.setOnImageAvailableListener(this::onImage, captureHandler);
         virtualDisplay = projection.createVirtualDisplay(
-                "CarromAutoAim", w, h, density,
+                "CarromAimVision", w, h, density,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader.getSurface(), null, captureHandler);
         ((NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE)).notify(
-                NOTIFY_ID, notification("Automatic detector running — visible only over Carrom Pool"));
+                NOTIFY_ID, notification("Visual detector running locally"));
     }
 
     private void onImage(ImageReader ir) {
@@ -108,10 +111,6 @@ public class AutoAimService extends Service {
         try {
             image = ir.acquireLatestImage();
             if (image == null) return;
-
-            boolean active = GameState.carromForeground;
-            main.post(() -> overlay.setGameVisible(active));
-            if (!active) return;
 
             long now = System.currentTimeMillis();
             if (now - lastAnalyzeMs < 120) return;
@@ -137,7 +136,27 @@ public class AutoAimService extends Service {
             rowBitmap.copyPixelsFromBuffer(buf);
             rowBitmap.getPixels(framePixels, 0, w, 0, 0, w, h);
             FrameAnalyzer.Result result = analyzer.analyze(framePixels, w, h);
-            main.post(() -> overlay.setResult(result));
+
+            boolean looksLikeBoard = result != null
+                    && result.board != null
+                    && result.pockets != null
+                    && result.pockets.length == 4
+                    && result.confidence >= 0.58f
+                    && (result.allCoins.size() >= 3 || result.striker != null);
+
+            if (looksLikeBoard) {
+                positiveFrames++;
+                negativeFrames = 0;
+            } else {
+                negativeFrames++;
+                positiveFrames = 0;
+            }
+            final boolean visible = positiveFrames >= 2 || (negativeFrames < 3 && overlay != null);
+            main.post(() -> {
+                if (looksLikeBoard) overlay.setResult(result);
+                if (positiveFrames >= 2) overlay.setGameVisible(true);
+                if (negativeFrames >= 3) overlay.setGameVisible(false);
+            });
         } catch (Throwable ignored) {
         } finally {
             if (image != null) image.close();
@@ -146,8 +165,8 @@ public class AutoAimService extends Service {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL, "Carrom auto aim", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Local screen analysis for the Carrom trajectory overlay");
+            NotificationChannel ch = new NotificationChannel(CHANNEL, "Carrom Aim Vision", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("Local visual analysis for the trajectory overlay");
             ((NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE)).createNotificationChannel(ch);
         }
     }
@@ -157,7 +176,7 @@ public class AutoAimService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return b.setContentTitle("Carrom Auto Aim v2")
+        return b.setContentTitle("Carrom Aim Vision v2.1")
                 .setContentText(body)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .setOngoing(true)
